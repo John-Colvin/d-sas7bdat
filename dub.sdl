@@ -1,0 +1,6 @@
+name "sas7bdat"
+description "File abstraction for sas7bdat files."
+copyright "Copyright © 2015, Charles"
+authors "Charles Smith"
+targetName "sas7bdat"
+targetType "library"
