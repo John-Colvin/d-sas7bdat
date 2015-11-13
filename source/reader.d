@@ -470,6 +470,7 @@ class Sas7bdatReader
 
                 table = callback.getTable;
             }
+            file.close();
         }
         unittest
         {
