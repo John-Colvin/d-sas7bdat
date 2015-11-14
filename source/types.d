@@ -58,7 +58,7 @@ package struct SasHeader
     ubyte[] unknown4;
     ubyte[] unknown5;
     ubyte[] unknown6;
-	EncodingScheme encodingScheme;
+    EncodingScheme encodingScheme;
     string sasFile;
     string name;
     string fileType;
