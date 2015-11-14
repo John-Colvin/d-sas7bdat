@@ -452,7 +452,10 @@ class Sas7bdatReader
                                             value = readBytesAs!double(header.endianness, raw);
                                             break;
                                         case SasColumnType.CHARACTER:
-                                            value = raw[0 .. length].map!(x => x.to!char).to!string.strip;
+                                            value = cast(dchar[])[];
+                                            const(ubyte)[] buffer = raw[0 .. length];
+                                            while (buffer.length > 0)
+                                                value ~= header.encodingScheme.decode(buffer);
                                             break;
                                         case SasColumnType.DATE:
                                             value = DateTime(1960, 1, 1) +
