@@ -10,6 +10,7 @@ import core.stdc.errno;
 import std.system;
 import std.datetime;
 import std.string;
+import std.encoding;
 
 import sas7bdat.types;
 import sas7bdat.util;
@@ -153,54 +154,76 @@ class Sas7bdatReader
                 buffer.length = 8192;
                 auto rawHeader = file.rawRead(buffer);
 
-                header.isU64 = rawHeader[32] == 0x33;
+                header.a2 = rawHeader[32] == 0x33;
                 header.unknown1 = rawHeader[33 .. 35];
-                header.padding = rawHeader[35] == 0x33 ? 4 : 0;
+                header.a1 = rawHeader[35] == 0x33 ? 4 : 0;
                 header.unknown2 = rawHeader[36];
                 header.endianness = rawHeader[37] == 0x00 ? Endian.bigEndian : Endian.littleEndian;
                 header.unknown3 = rawHeader[38];
-                header.os = cast(SasOSType)(rawHeader[39] - '0');
+                header.fileFormat = cast(SasFileFormat)(rawHeader[39] - '0');
                 header.unknown4 = rawHeader[40 .. 48];
                 header.unknown5 = rawHeader[48 .. 56];
-                header.unknown6 = rawHeader[56 .. 64];
+                header.unknown6 = rawHeader[56 .. 62];
+                switch (readTypeFromBytesAt!SasEncoding(header.endianness, rawHeader, 70))
+                {
+                    case SasEncoding.WINDOWS_1252:
+                        header.encodingScheme = EncodingScheme.create("WINDOWS-1252");
+                        break;
+                    case SasEncoding.WINDOWS_1250:
+                        header.encodingScheme = EncodingScheme.create("WINDOWS-1250");
+                        break;
+                    case SasEncoding.ISO_8859_1:
+                        header.encodingScheme = EncodingScheme.create("ISO-8859-1");
+                        break;
+                    case SasEncoding.ISO_8859_2:
+                        header.encodingScheme = EncodingScheme.create("ISO-8859-2");
+                        break;
+                    case SasEncoding.UTF8:
+                        header.encodingScheme = EncodingScheme.create("UTF-8");
+                        break;
+                    default:
+                        header.encodingScheme = EncodingScheme.create("WINDOWS-1252");
+                        break;
+                }
+
                 header.sasFile = rawHeader[84 .. 92].map!(x => x.to!char).to!string.strip;
                 header.name = rawHeader[92 .. 156].map!(x => x.to!char).to!string.strip;
                 header.fileType = rawHeader[156 .. 164].map!(x => x.to!char).to!string.strip;
-                header.paddedSpace = rawHeader[164 .. 164 + header.padding];
+                header.paddedSpace = rawHeader[164 .. 164 + header.a1];
                 // SAS uses a ridiculous date format that's the number of seconds since Jan 1, 1960, stored as a double
                 header.createdAt = DateTime(1960,1,1) + dur!"seconds"(
-                        readTypeFromBytesAt!double(header.endianness, rawHeader, 164 + header.padding).to!long);
+                        readTypeFromBytesAt!double(header.endianness, rawHeader, 164 + header.a1).to!long);
                 header.modifiedAt = DateTime(1960,1,1) + dur!"seconds"(
-                        readTypeFromBytesAt!double(header.endianness, rawHeader, 172 + header.padding).to!long);
-                header.unknown7 = rawHeader[180 + header.padding .. 196 + header.padding];
-                header.headerLength = readTypeFromBytesAt!int(header.endianness, rawHeader, 196 + header.padding);
-                header.pageSize = readTypeFromBytesAt!int(header.endianness, rawHeader, 200 + header.padding);
+                        readTypeFromBytesAt!double(header.endianness, rawHeader, 172 + header.a1).to!long);
+                header.unknown7 = rawHeader[180 + header.a1 .. 196 + header.a1];
+                header.headerLength = readTypeFromBytesAt!int(header.endianness, rawHeader, 196 + header.a1);
+                header.pageSize = readTypeFromBytesAt!int(header.endianness, rawHeader, 200 + header.a1);
                 // At this point, more padding can be introduced to fit numbers stored with the unix 64 bit format
-                if (header.isU64)
+                if (header.a2)
                 {
-                    header.padding += 4;
-                    header.pageCount = readTypeFromBytesAt!long(header.endianness, rawHeader, 204 + header.padding);
+                    header.a1 += 4;
+                    header.pageCount = readTypeFromBytesAt!long(header.endianness, rawHeader, 204 + header.a1);
                 } else {
-                    header.pageCount = readTypeFromBytesAt!int(header.endianness, rawHeader, 204 + header.padding).to!long;
+                    header.pageCount = readTypeFromBytesAt!int(header.endianness, rawHeader, 204 + header.a1).to!long;
                 }
-                header.unknown8 = rawHeader[208 + header.padding .. 216 + header.padding];
-                header.sasRelease = rawHeader[216 + header.padding .. 224 + header.padding]
+                header.unknown8 = rawHeader[208 + header.a1 .. 216 + header.a1];
+                header.sasRelease = rawHeader[216 + header.a1 .. 224 + header.a1]
                                         .map!(x => x.to!char).to!string.strip;
-                header.serverType = rawHeader[224 + header.padding .. 240 + header.padding]
+                header.serverType = rawHeader[224 + header.a1 .. 240 + header.a1]
                                         .map!(x => x.to!char).to!string.strip;
-                header.osVersion = rawHeader[240 + header.padding .. 256 + header.padding]
+                header.osVersion = rawHeader[240 + header.a1 .. 256 + header.a1]
                                         .map!(x => x.to!char).to!string.strip;
-                header.osMaker = rawHeader[256 + header.padding .. 272 + header.padding]
+                header.osMaker = rawHeader[256 + header.a1 .. 272 + header.a1]
                                         .map!(x => x.to!char).to!string.strip;
-                header.osName = rawHeader[272 + header.padding .. 288 + header.padding]
+                header.osName = rawHeader[272 + header.a1 .. 288 + header.a1]
                                         .map!(x => x.to!char).to!string.strip;
-                header.unknown9 = rawHeader[288 + header.padding .. 320 + header.padding];
-                header.pageSeqSignature = readTypeFromBytesAt!int(header.endianness, rawHeader, 320 + header.padding);
-                header.unknown10 = rawHeader[324 + header.padding .. 328 + header.padding];
+                header.unknown9 = rawHeader[288 + header.a1 .. 320 + header.a1];
+                header.pageSeqSignature = readTypeFromBytesAt!int(header.endianness, rawHeader, 320 + header.a1);
+                header.unknown10 = rawHeader[324 + header.a1 .. 328 + header.a1];
                 header.unknownTimestamp = DateTime(1960, 1, 1) + dur!"seconds"(
-                        readTypeFromBytesAt!double(header.endianness, rawHeader, 328 + header.padding).to!long);
+                        readTypeFromBytesAt!double(header.endianness, rawHeader, 328 + header.a1).to!long);
 
-                assert(sum(rawHeader[336 + header.padding ..
+                assert(sum(rawHeader[336 + header.a1 ..
                       (header.headerLength < buffer.length) ? header.headerLength : buffer.length]) == 0,
                        "Data in header unaccounted for");
             }
@@ -292,44 +315,35 @@ class Sas7bdatReader
 
                             SasSubheader colName = getSubheader(subheaders, COL_NAME_SUBHEADER);
 
-                            SasSubheader[] colLabels = getSubheaders(subheaders, COL_FRMT_SUBHEADER);
-                            assert(colLabels.length == 0 || colLabels.length == col_count, "Unexpected column label count");
+                            SasSubheader[] colFormats = getSubheaders(subheaders, COL_FRMT_SUBHEADER);
+
+                            assert(colFormats.length == 0 || colFormats.length == col_count, "Unexpected column label count");
 
                             foreach (immutable colNumber; 0 .. col_count)
                             {
                                 int base = 12 + colNumber * 8;
                                 string columnName;
                                 string format;
-                                int formatOffset;
-                                int formatLength;
+                                string label;
 
                                 auto amd = colName.rawData[base];
                                 if (amd == 0)
                                 {
-                                    int offset = readTypeFromBytesAt!short(header.endianness, colName.rawData, base + 2) + 4;
-                                    int length = readTypeFromBytesAt!short(header.endianness, colName.rawData, base + 4);
-                                    formatOffset = readTypeFromBytesAt!short(header.endianness, colName.rawData, 14) + 4;
-                                    formatLength = readTypeFromBytesAt!short(header.endianness, colName.rawData, 16);
+                                    auto offset = readTypeFromBytesAt!short(header.endianness, colName.rawData, base + 2) + 4;
+                                    auto length = readTypeFromBytesAt!short(header.endianness, colName.rawData, base + 4);
 
                                     columnName = colText.rawData[offset .. offset + length].map!(x => x.to!char).to!string;
                                 } else {
                                     columnName = "COL" ~ colNumber.to!string;
                                 }
 
-                                if (formatLength > 0)
+                                if (colFormats.length > 0)
                                 {
-                                    format = colText.rawData[formatOffset .. formatOffset + formatLength]
-                                                    .map!(x => x.to!char).to!string.strip;
-                                }
-
-                                string label;
-                                if (colLabels.length > 0)
-                                {
-                                    base = 42;
-                                    int offset = readTypeFromBytesAt!short(header.endianness, colLabels[colNumber].rawData, base) + 4;
-                                    short length = readTypeFromBytesAt!short(header.endianness, colLabels[colNumber].rawData, base + 2);
-                                    formatOffset = readTypeFromBytesAt!short(header.endianness, colName.rawData, 14) + 4;
-                                    formatLength = readTypeFromBytesAt!short(header.endianness, colName.rawData, 16);
+                                    base = 36;
+                                    auto formatOffset = readTypeFromBytesAt!short(header.endianness, colFormats[colNumber].rawData, base + 0) + 4;
+                                    auto formatLength = readTypeFromBytesAt!short(header.endianness, colFormats[colNumber].rawData, base + 2);
+                                    auto labelOffset = readTypeFromBytesAt!short(header.endianness, colFormats[colNumber].rawData, base + 6) + 4;
+                                    auto labelLength = readTypeFromBytesAt!short(header.endianness, colFormats[colNumber].rawData, base + 8);
 
                                     if (formatLength > 0)
                                     {
@@ -337,9 +351,9 @@ class Sas7bdatReader
                                                         .map!(x => x.to!char).to!string.strip;
                                     }
 
-                                    if (length > 0)
+                                    if (labelLength > 0)
                                     {
-                                        label = colText.rawData[offset .. offset + length].map!(x => x.to!char).to!string.strip;
+                                        label = colText.rawData[labelOffset .. labelOffset + labelLength].map!(x => x.to!char).to!string.strip;
                                     } else {
                                         label = null;
                                     }
