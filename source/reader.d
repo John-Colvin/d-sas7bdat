@@ -15,66 +15,13 @@ import std.encoding;
 import sas7bdat.types;
 import sas7bdat.util;
 
-interface SasReaderCallback
-{
-    void column(int columnIndex, string columnName, string columnLabel, SasColumnType columnType, int columnLength);
-    bool readData();
-    bool row(int rowNumber, Variant[] rowData);
-}
-
-class CountingReaderCallback : SasReaderCallback
-{
-    this()
-    {
-
-    }
-
-    void column(int columnIndex, string columnName, string columnLabel, SasColumnType columnType, int columnLength)
-    {
-        ++columnCount;
-    }
-
-    bool readData()
-    {
-        return true;
-    }
-
-    bool row(int rowNumber, Variant[] rowData)
-    {
-        ++rowCount;
-        table ~= rowData;
-        return true;
-    }
-
-    int getColumnCount()
-    {
-        return columnCount;
-    }
-
-    int getRowCount()
-    {
-        return rowCount;
-    }
-
-    Variant[][] getTable()
-    {
-        return table;
-    }
-
-    private:
-        Variant[][] table;
-        int columnCount;
-        int rowCount;
-
-}
-
 class Sas7bdatReader
 {
     SasHeader header;
 
     this(string path)
     {
-        this.read(path, new CountingReaderCallback());
+        this.read(path);
     }
 
     Variant getCell(size_t row, size_t col)
@@ -102,7 +49,7 @@ class Sas7bdatReader
         File file;
         Variant[][] table;
 
-        void read(string path, CountingReaderCallback callback)
+        void read(string path)
         {
             const ubyte[32] MAGIC_NUMBER = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                                             0x00, 0x00, 0x00, 0x00, 0xC2, 0xEA, 0x81, 0x60,
@@ -248,7 +195,6 @@ class Sas7bdatReader
                 auto col_count = -1;
 
                 file.seek(header.headerLength, SEEK_SET);
-
                 foreach(pageData; file.byChunk(header.pageSize))
                 {
                     ++pageNumber;
@@ -283,6 +229,15 @@ class Sas7bdatReader
                                 subheaders ~= subheader;
                             }
                         }
+                        
+                        version(unittest) {
+                            foreach (subheader; subheaders) {
+                                subheader.signature.writeln;
+                                foreach (e; std.range.zip(std.range.iota(0, subheader.rawData.length), subheader.rawData))
+                                    writeln(e[0], ": ", e[1]);
+                            }
+                        }
+                        
                     }
 
                     if (pageType == 1 || pageType == 2)
@@ -393,8 +348,6 @@ class Sas7bdatReader
                                 }
 
                                 columnTypes ~= columnType;
-
-                                callback.column(colNumber, columnName, label, columnType, length);
                             }
 
                             subheadersParsed = true;
@@ -476,16 +429,12 @@ class Sas7bdatReader
                             }
 
                             ++rowCount;
-                            bool next = callback.row(rowCount, rowData);
-                            if (! next)
-                                return;
+                            table ~= rowData;
 
                             base = base + row_length;
                         }
                     }
                 }
-
-                table = callback.getTable;
             }
             file.close();
         }
