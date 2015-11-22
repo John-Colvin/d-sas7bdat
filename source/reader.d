@@ -1,6 +1,6 @@
 module sas7bdat.reader;
 
-public import std.Variant;
+public import std.Variant : Variant;
 import std.stdio;
 import std.algorithm;
 import std.file;
@@ -49,21 +49,12 @@ class Sas7bdatReader
         File file;
         Variant[][] table;
 
-        void read(string path)
+        void readHeader(string path)
         {
             const ubyte[32] MAGIC_NUMBER = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                                             0x00, 0x00, 0x00, 0x00, 0xC2, 0xEA, 0x81, 0x60,
                                             0xB3, 0x14, 0x11, 0xCF, 0xBD, 0x92, 0x08, 0x00,
                                             0x09, 0xC7, 0x31, 0x8C, 0x18, 0x1F, 0x10, 0x11];
-
-            const ubyte[] ROW_SIZE_SUBHEADER = [0xF7, 0xF7, 0xF7, 0xF7];
-            const ubyte[] COL_SIZE_SUBHEADER = [0xF6, 0xF6, 0xF6, 0xF6];
-            const ubyte[] COUNTS_SUBHEADER   = [0x00, 0xFC, 0xFF, 0xFF];
-            const ubyte[] COL_TEXT_SUBHEADER = [0xFD, 0xFF, 0xFF, 0xFF];
-            const ubyte[] COL_NAME_SUBHEADER = [0xFF, 0xFF, 0xFF, 0xFF];
-            const ubyte[] COL_ATTR_SUBHEADER = [0xFC, 0xFF, 0xFF, 0xFF];
-            const ubyte[] COL_FRMT_SUBHEADER = [0xFE, 0xFB, 0xFF, 0xFF];
-            const ubyte[] COL_LIST_SUBHEADER = [0xFE, 0xFF, 0xFF, 0xFF];
 
             try
             {
@@ -90,14 +81,14 @@ class Sas7bdatReader
                         break;
                 }
             }
-
-            // Read the header for the file to extract some basic metadata
+            
+             // Read the header for the file to extract some basic metadata
             {
                 scope(failure) throw new Exception("Failed to read header.");
 
-                ubyte[] buffer;
                 // In principle, the length of the header is at most 336 bytes long; however, it appears there's some
                 // space reserved
+                ubyte[] buffer;
                 buffer.length = 8192;
                 auto rawHeader = file.rawRead(buffer);
 
@@ -174,6 +165,46 @@ class Sas7bdatReader
                       (header.headerLength < buffer.length) ? header.headerLength : buffer.length]) == 0,
                        "Data in header unaccounted for");
             }
+            
+            file.close();
+        }
+
+        void read(string path)
+        {
+
+            readHeader(path);
+
+            const ubyte[4] ROW_SIZE_SUBHEADER = [0xF7, 0xF7, 0xF7, 0xF7];
+            const ubyte[4] COL_SIZE_SUBHEADER = [0xF6, 0xF6, 0xF6, 0xF6];
+            const ubyte[4] COUNTS_SUBHEADER   = [0x00, 0xFC, 0xFF, 0xFF];
+            const ubyte[4] COL_TEXT_SUBHEADER = [0xFD, 0xFF, 0xFF, 0xFF];
+            const ubyte[4] COL_NAME_SUBHEADER = [0xFF, 0xFF, 0xFF, 0xFF];
+            const ubyte[4] COL_ATTR_SUBHEADER = [0xFC, 0xFF, 0xFF, 0xFF];
+            const ubyte[4] COL_FRMT_SUBHEADER = [0xFE, 0xFB, 0xFF, 0xFF];
+            const ubyte[4] COL_LIST_SUBHEADER = [0xFE, 0xFF, 0xFF, 0xFF];
+
+            try
+            {
+                file = File(path, "r");
+            }
+            catch (ErrnoException ex)
+            {
+                switch(ex.errno)
+                {
+                    case EPERM:
+                    case EACCES:
+                        // Permission denied
+                        // TODO(csmith): handle file permission
+                        break;
+                    case ENOENT:
+                        // File does not exist
+                        // TODO(csmith): handle file existence
+                        break;
+                    default:
+                        //TODO(csmith): handle general exception
+                        break;
+                }
+            }
 
             // Read pages
             {
@@ -187,12 +218,11 @@ class Sas7bdatReader
                 auto subheadersParsed = false;
 
                 auto pageNumber = 0;
-                auto rowCount = 0;
 
-                auto row_count = -1;
-                auto row_count_fp = -1;
-                auto row_length = -1;
-                auto col_count = -1;
+                auto rowCount = -1;
+                auto rowCountFP = -1;
+                auto rowLength = -1;
+                auto colCount = -1;
 
                 file.seek(header.headerLength, SEEK_SET);
                 foreach(pageData; file.byChunk(header.pageSize))
@@ -204,7 +234,7 @@ class Sas7bdatReader
                         // Known page types
                         case 0, 1, 2:
                             break;
-                        //TODO(csmith): Known page type, unsupported
+                        //TODO(csmith): Known page type, unsupported currently
                         case 4:
                             continue;
                         default:
@@ -233,8 +263,12 @@ class Sas7bdatReader
                         version(unittest) {
                             foreach (subheader; subheaders) {
                                 subheader.signature.writeln;
-                                foreach (e; std.range.zip(std.range.iota(0, subheader.rawData.length), subheader.rawData))
-                                    writeln(e[0], ": ", e[1]);
+                                foreach (e; std.range.zip(std.range.iota(0, subheader.rawData.length), subheader.rawData)) {
+                                    char character = '\0';
+                                    if (0 <= e[1] && e[1] <= 255)
+                                        character = cast(char)e[1];
+                                    writeln(e[0], ": ", character);
+                                }
                             }
                         }
                         
@@ -245,16 +279,16 @@ class Sas7bdatReader
                         if (! subheadersParsed)
                         {
                             SasSubheader rowSize = getSubheader(subheaders, ROW_SIZE_SUBHEADER);
-                            row_length = readTypeFromBytesAt!int(header.endianness, rowSize.rawData, 20);
-                            row_count = readTypeFromBytesAt!int(header.endianness, rowSize.rawData, 24);
-                            int col_count_7 = readTypeFromBytesAt!int(header.endianness, rowSize.rawData, 36);
-                            row_count_fp = readTypeFromBytesAt!int(header.endianness, rowSize.rawData, 60);
+                            rowLength = readTypeFromBytesAt!int(header.endianness, rowSize.rawData, 20);
+                            rowCount = readTypeFromBytesAt!int(header.endianness, rowSize.rawData, 24);
+                            int colCount7 = readTypeFromBytesAt!int(header.endianness, rowSize.rawData, 36);
+                            rowCountFP = readTypeFromBytesAt!int(header.endianness, rowSize.rawData, 60);
 
                             SasSubheader colSize = getSubheader(subheaders, COL_SIZE_SUBHEADER);
-                            int col_count_6 = readTypeFromBytesAt!int(header.endianness, colSize.rawData, 4);
-                            col_count = col_count_6;
+                            int colCount6 = readTypeFromBytesAt!int(header.endianness, colSize.rawData, 4);
+                            colCount = colCount6;
 
-                            assert(col_count_7 == col_count_6, "Column count mismatched");
+                            assert(colCount7 == colCount6, "Column count mismatched");
 
                             SasSubheader colText = getSubheader(subheaders, COL_TEXT_SUBHEADER);
 
@@ -272,9 +306,9 @@ class Sas7bdatReader
 
                             SasSubheader[] colFormats = getSubheaders(subheaders, COL_FRMT_SUBHEADER);
 
-                            assert(colFormats.length == 0 || colFormats.length == col_count, "Unexpected column label count");
+                            assert(colFormats.length == 0 || colFormats.length == colCount, "Unexpected column label count");
 
-                            foreach (immutable colNumber; 0 .. col_count)
+                            foreach (immutable colNumber; 0 .. colCount)
                             {
                                 int base = 12 + colNumber * 8;
                                 string columnName;
@@ -354,27 +388,27 @@ class Sas7bdatReader
                         }
 
                         // Read data
-                        int row_count_p;
+                        int rowCountP;
                         int base;
                         if (pageType == 2)
                         {
-                            row_count_p = row_count_fp;
+                            rowCountP = rowCountFP;
                             base = 24 + subheaders.length * 12 + 12;
                             base = base + base % 8;
                         } else {
-                            row_count_p = readTypeFromBytesAt!int(header.endianness, pageData, 18);
+                            rowCountP = readTypeFromBytesAt!int(header.endianness, pageData, 18);
                             base = 24;
                         }
 
-                        if (row_count_p > row_count)
+                        if (rowCountP > rowCount)
                         {
-                            row_count_p = row_count;
+                            rowCountP = rowCount;
                         }
 
-                        foreach (rowNumber; 0 .. row_count_p)
+                        foreach (rowNumber; 0 .. rowCountP)
                         {
                             Variant[] rowData;
-                            foreach (col; 0 .. col_count)
+                            foreach (col; 0 .. colCount)
                             {
                                 int offset = base + columnOffsets[col];
                                 int length = columnLengths[col];
@@ -408,7 +442,7 @@ class Sas7bdatReader
                                             value = cast(dchar[])[];
                                             const(ubyte)[] buffer = raw[0 .. length];
                                             while (buffer.length > 0)
-                                                value ~= header.encodingScheme.decode(buffer);
+                                                value ~= header.encodingScheme.safeDecode(buffer);
                                             break;
                                         case SasColumnType.DATE:
                                             value = DateTime(1960, 1, 1) +
@@ -428,10 +462,8 @@ class Sas7bdatReader
                                 }
                             }
 
-                            ++rowCount;
                             table ~= rowData;
-
-                            base = base + row_length;
+                            base = base + rowLength;
                         }
                     }
                 }
@@ -441,7 +473,7 @@ class Sas7bdatReader
         unittest
         {
             import std.range;
-            foreach (path; dirEntries("tests/sasFiles", SpanMode.breadth).filter!(f => f.name.endsWith(".sas7bdat")).array.sort!"a < b")
+            foreach (path; dirEntries("tests/sasFiles", SpanMode.breadth).filter!(f => f.name.endsWith("date9.sas7bdat")).array.sort!"a < b")
             {
 
                 try
